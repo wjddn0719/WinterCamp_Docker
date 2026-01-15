@@ -1,71 +1,78 @@
+import os
+
 import fitz
 import pymupdf4llm
-from fastapi import FastAPI, status, Request, HTTPException, UploadFile, File
-import uvicorn
+import requests
+from fastapi import FastAPI, Body, UploadFile, File
 from pydantic import BaseModel
-from starlette.responses import JSONResponse
+from starlette.requests import Request
+from starlette.responses import Response, RedirectResponse, JSONResponse
+from fastapi import HTTPException
 
-full_text = ""
+# from backend import rag_server
+# from backend.rag_server import llm_response
+
 app = FastAPI()
 
+# RAG 서버 URL
+RAG_SERVER_URL = os.getenv("RAG_SERVER_URL", "http://rag_server:8888")
 
+# Ollama 서버 URL
+OLLAMA_SERVER_URL = os.getenv("OLLAMA_SERVER_URL", "http://ollama:11434")
+
+full_text = ""
+
+# 1번 서버 띄우기
 @app.get("/hello")
-def hello_world():
+def hello():
     return {"message": "Hello World"}
 
-
+#3. 로그인 하기 위해서 클래스 생성    #basemodel -> type 강제
 class LoginUser(BaseModel):
     username: str
     password: str
 
-
 users = []
-users.append(LoginUser(username="asd", password="jungwooLee"))
+users.append(LoginUser(username="park",password="q1w2e3"))
+users.append(LoginUser(username="choi",password="q1w2e3"))
 
-
+#2번 로그인
 @app.post("/login")
-def login(user: LoginUser):
+def login(response: Response, user: LoginUser = Body()): #option enter  response ->sh,  body ->
+    # 로그인 검증
     ok = any(u.username == user.username and u.password == user.password for u in users)
     if not ok:
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"message": "Invalid credentials"}
-        )
+        return JSONResponse({"ok": False, "reason": "invalid credentials"}, status_code=401)
 
-    res = JSONResponse(content={"message": f"Welcome {user.username}"})
-    res.set_cookie("username", user.username)
+    # 응답 만들고 쿠키 세팅
+    res = JSONResponse({"ok": True})
+    res.set_cookie("username", user.username, httponly=True)
     return res
 
 
-@app.get("/pages")
-def pages(request: Request):
-    username = request.cookies.get("username")
+@app.get("/page")
+def page(request: Request):
+    username = request.cookies.get("username")  # KeyError 방지
     if not username:
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"message": "Not logged in"}
-        )
+        return JSONResponse({"ok": False, "reason": "no cookie"}, status_code=401)
 
-    if username in (u.username for u in users):
-        return JSONResponse(
-            content={
-                "ok": True,
-                "message": f"Welcome {username}"
-            }
-        )
+    # username이 등록된 유저인지 확인
+    if username in [u.username for u in users]:
+        return {"ok": True, "message": f"welcome {username}"}
 
-    return JSONResponse(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"message": "Invalid user"}
-    )
+    return JSONResponse({"ok": False, "reason": "unknown user"}, status_code=403)
+
 
 def get_current_user(request: Request) -> str:
     username = request.cookies.get("username")
     if not username:
-        raise HTTPException(status_code = 401)
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+
     if username not in [u.username for u in users]:
-        raise HTTPException(status_code = 403)
+        raise HTTPException(status_code=401, detail="다시 로그인해주세요")
+
     return username
+
 
 @app.post("/upload")
 async def upload(request: Request, file: UploadFile = File(...)):
@@ -107,6 +114,3 @@ async def upload(request: Request, file: UploadFile = File(...)):
         "chars": len(full_text),
         "preview": full_text[:500],  # 너무 길면 잘라서
     }
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
